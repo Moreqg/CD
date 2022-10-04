@@ -1,0 +1,89 @@
+name: segformer_swin
+version: f0
+fold: &fold 0
+
+model:
+  type: MMSegModel
+#  load_from: ./weights/segformer_mit-b2_512x512_160k_ade20k_20220620_114047-64e4feca.pth
+  backbone:
+    type: mmseg.SwinTransformer
+    in_channels: 6
+    embed_dims: 64
+    num_stages: 4
+    num_layers: [3, 4, 6, 3] # b2
+    # num_layers: [3, 8, 27, 3] # b4
+    num_heads: [1, 2, 5, 8]
+    patch_sizes: [7, 3, 3, 3]
+    sr_ratios: [8, 4, 2, 1]
+    out_indices: [0, 1, 2, 3]
+    with_cp: False
+    mlp_ratio: 4
+    qkv_bias: True
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    drop_path_rate: 0.1
+  decode_head:
+    type: SegformerHead
+    in_channels: [64, 128, 320, 512]
+    in_index: [0, 1, 2, 3]
+    channels: 256
+    dropout_ratio: 0.1
+    norm_cfg: {type: 'BN', requires_grad: True}
+    align_corners: False
+    num_classes: 1
+
+loss: [{
+  type: BCEWithIgnoreLoss,
+  loss_name: bce_loss,
+  ignore_index: 255,
+  loss_weight: 1.0,
+}, {
+  type: DiceLoss,
+  loss_name: dice_loss,
+  loss_weight: 1.0,
+}]
+
+metric:
+  type: DiceMetric
+
+data:
+  type: ConcatData
+  fold: 0
+  num_folds: 5
+  batch_size: 16
+  stratified_by: null
+  group_by: null
+  dataset:
+    resize: &resize 512
+    trans: {
+      train: {type: Compose, transforms: [
+        {type: Resize, height: *resize, width: *resize},
+        {type: HorizontalFlip, p: 0.5},
+        {type: VerticalFlip, p: 0.5},
+        {type: Normalize},
+        {type: ToTensorV2},
+      ], additional_targets: {imageB: image}},
+      val: {type: Compose, transforms: [
+        {type: Resize, height: *resize, width: *resize},
+        {type: Normalize},
+        {type: ToTensorV2},
+      ], additional_targets: {imageB: image}}
+    }
+
+train:
+  # optimizer
+  optimizer: adamw
+  learning_rate: 1e-3
+  weight_decay: 1e-3
+
+  # scheduler
+  num_epochs: 100
+  scheduler: one_cycle
+
+  # trainer
+  monitor: val_dice
+  log_step: 50
+  val_interval: 1
+  swa: False
+  grad_clip: 2.0
+  strategy: dp
